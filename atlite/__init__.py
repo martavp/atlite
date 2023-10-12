@@ -17,7 +17,7 @@ from .cutout import Cutout
 from .gis import compute_indicatormatrix, regrid, ExclusionContainer
 from .resource import windturbines, solarpanels
 
-from .version import version as __version__
+#from .version import version as __version__
 
 __author__ = (
     "The Atlite Authors: Gorm Andresen (Aarhus University), "
