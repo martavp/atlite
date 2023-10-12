@@ -147,13 +147,13 @@ def compute_indicatormatrix(orig, dest, orig_crs=4326, dest_crs=4326):
     indicator = sp.sparse.lil_matrix((len(dest), len(orig)), dtype=float)
     tree = STRtree(orig)
     idx = dict((id(o), i) for i, o in enumerate(orig))
-
+    
     for i, d in enumerate(dest):
         for o in tree.query(d):
-            if o.intersects(d):
-                j = idx[id(o)]
-                area = d.intersection(o).area
-                indicator[i, j] = area / o.area
+            if orig[o].intersects(d):
+                j = idx[id(orig[o])]
+                area = d.intersection(orig[o]).area
+                indicator[i, j] = area / orig[o].area
 
     return indicator
 
