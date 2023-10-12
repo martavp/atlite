@@ -42,6 +42,7 @@ crs = 4326
 dask.config.set({"array.slicing.split_large_chunks": True})
 
 
+
 def search_ESGF(esgf_params, url="https://esgf-data.dkrz.de/esg-search"):
     conn = SearchConnection(url, distrib=True)
     ctx = conn.new_context(latest=True, **esgf_params)
@@ -163,7 +164,7 @@ def retrieve_data(esgf_params, coords, variables, chunks=None, tmpdir=None, lock
                 for f in search_results
                 if _year_in_file(f.opendap_url.split("_")[-1], years)
             ]
-            dsets.append(xr.open_mfdataset(files, chunks=chunks, concat_dim=["time"]))
+            dsets.append(xr.open_mfdataset(files, chunks=chunks, combine='nested', concat_dim=["time"]))
     ds = xr.merge(dsets)
 
     ds.attrs = {**ds.attrs, **esgf_params}
