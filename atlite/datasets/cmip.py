@@ -204,7 +204,7 @@ def retrieve_data(esgf_params, coords, variables, chunks=None, tmpdir=None, lock
             temp_ds = xr.open_mfdataset(files, chunks=chunks, concat_dim=["time"], combine='nested')
             dt = xr.infer_freq(time)
             if xr.infer_freq(temp_ds["time"]) != dt: 
-                temp_ds = resample_ds(esgf_params,temp_ds,dt)
+                temp_ds = resample_ds(esgf_params,temp_ds,coords["time"])
                 
             dsets.append(temp_ds)
     ds = xr.merge(dsets)
@@ -214,65 +214,9 @@ def retrieve_data(esgf_params, coords, variables, chunks=None, tmpdir=None, lock
     return ds
 
 
-
-def resample_ds(esgf_params,temp_ds,dt):
-    temp_ds_resampled = temp_ds.resample(time=dt).nearest()
-   
-    if xr.infer_freq(temp_ds["time"]) == "6H":  
-        if pd.Timestamp(temp_ds["time"][0].values).hour == 3:
-            firstval = temp_ds_resampled.sel(time = temp_ds["time"][0])
-            firstval["time"] = firstval["time"] - pd.Timedelta(dt, inplace=True)
-            temp_ds_resampled = xr.combine_nested([firstval, temp_ds_resampled],concat_dim="time")
-            
-        if pd.Timestamp(temp_ds["time"][0].values).hour == 6:
-            firstval = temp_ds_resampled.sel(time = temp_ds["time"][0])
-            #firstval_00 = temp_ds_resampled.sel(time = temp_ds["time"][0])
-            firstval["time"] = firstval["time"] - pd.Timedelta(dt, inplace=True)
-            #firstval_00["time"] = firstval_00["time"] - 2*pd.Timedelta(dt, inplace=True)            
-            temp_ds_resampled = xr.combine_nested([firstval, temp_ds_resampled],concat_dim="time")
-            
-        if pd.Timestamp(temp_ds["time"][-1].values).hour == 18:
-            lastval = temp_ds_resampled.sel(time = temp_ds["time"][-1])
-            lastval["time"] = lastval["time"] + pd.Timedelta(dt, inplace=True)
-            temp_ds_resampled = xr.combine_nested([temp_ds_resampled,  lastval],concat_dim="time")
-        
-        else:
-            pass
-              
-        print('Dataset', esgf_params["variable"], 'resampled from a frequency of', xr.infer_freq(temp_ds["time"]), 'to a frequency of', dt)
-
-    if xr.infer_freq(temp_ds["time"]) == "D":
-        if pd.Timestamp(temp_ds["time"][0].values).hour == 12:
-            firstval = temp_ds_resampled.sel(time = temp_ds["time"][0])
-            firstval_00 = temp_ds_resampled.sel(time = temp_ds["time"][0])
-            firstval_03 = temp_ds_resampled.sel(time = temp_ds["time"][0])
-            firstval_06 = temp_ds_resampled.sel(time = temp_ds["time"][0])
-            firstval_09 = temp_ds_resampled.sel(time = temp_ds["time"][0])
-            firstval_00["time"] = firstval_00["time"] - 4*pd.Timedelta(dt, inplace=True) 
-            firstval_03["time"] = firstval_03["time"] - 3*pd.Timedelta(dt, inplace=True)
-            firstval_06["time"] = firstval_06["time"] - 2*pd.Timedelta(dt, inplace=True)
-            firstval_09["time"] = firstval_09["time"] - pd.Timedelta(dt, inplace=True)
-            
-            lastval_15 = temp_ds_resampled.sel(time = temp_ds["time"][-1])
-            lastval_18 = temp_ds_resampled.sel(time = temp_ds["time"][-1])
-            lastval_21 = temp_ds_resampled.sel(time = temp_ds["time"][-1])
-            lastval_15["time"] = lastval_15["time"] + pd.Timedelta(dt, inplace=True) 
-            lastval_18["time"] = lastval_18["time"] + 2*pd.Timedelta(dt, inplace=True) 
-            lastval_21["time"] = lastval_21["time"] + 3*pd.Timedelta(dt, inplace=True) 
-            temp_ds_resampled = xr.combine_nested([firstval_00,
-                                        firstval_03,
-                                        firstval_06,
-                                        firstval_09,
-                                        temp_ds_resampled,
-                                        lastval_15,
-                                        lastval_18,
-                                        lastval_21],
-                                        concat_dim="time")
-                
-        else: 
-            print("Dataset does not start at 12 o'clock. The 'resample_ds' in cmip.py function needs to include this scenario.")
-        print('Dataset', esgf_params["variable"], 'resampled from a frequency of', xr.infer_freq(temp_ds["time"]), 'to a frequency of', dt)
-        
+def resample_ds(esgf_params,temp_ds,time):
+    temp_ds_resampled = temp_ds.reindex_like(time).ffill('time')
+    
     return temp_ds_resampled
 
 
