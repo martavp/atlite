@@ -1,0 +1,17 @@
+logging:
+  level: INFO
+  format: '%(levelname)s:%(name)s:%(message)s'
+
+scenario:
+  source_id:
+  - 'EC-Earth3'
+  variant_label:
+  - 'r4i1p1f1'
+  experiment_id:
+  - 'ssp126'
+  year:
+  - 2034
+
+enable:
+  retrieve_cutout_cmip6: true
+
