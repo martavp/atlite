@@ -23,4 +23,5 @@ atlite/version.py
 paper
 .coverage*
 !.coveragerc
-sandbox_ebbe/
+sandbox_ebbe/figures
+sandbox_ebbe/data

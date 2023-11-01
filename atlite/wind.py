@@ -16,7 +16,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def extrapolate_wind_speed(ds, to_height, from_height=None, from_height2=None):
+def extrapolate_wind_speed(ds, model, to_height, from_height=None, from_height2=None):
     """Extrapolate the wind speed from a given height above ground to another.
 
     If ds already contains a key refering to wind speeds at the desired to_height,
@@ -57,7 +57,6 @@ def extrapolate_wind_speed(ds, to_height, from_height=None, from_height2=None):
     [2] https://en.wikipedia.org/w/index.php?title=Roughness_length&oldid=862127433,
     Retrieved 2019-02-15.
     """
-
     # Fast lane
     to_name = "wnd{h:0d}m".format(h=int(to_height))
     if to_name in ds:
@@ -72,29 +71,26 @@ def extrapolate_wind_speed(ds, to_height, from_height=None, from_height2=None):
 
         # Checking if cutout contains wind speed at more than 1 height level
         if len(heights) > 1:
-            extrapolate_without_roughness=True
-        else: 
-            extrapolate_without_roughness=False
-
-        if extrapolate_without_roughness==False:
-            from_height = heights[np.argmin(np.abs(heights - to_height))]
-            print("Calculating wind speed at hub height using 1 wind speed dataset and surface roughness dataset.")
-
-        if  extrapolate_without_roughness==True:
+            possible_extrapolate_without_roughness=True
             from_height = heights[np.argmin(np.abs(heights - to_height))]
             heights = np.delete(heights, np.argmin(np.abs(heights - to_height)))
             from_height2 = heights[np.argmin(np.abs(heights - to_height))]      # Finding second closest height
-            print("Calculating wind speed at hub height using 2 wind speed datasets.")
+        else: 
+            possible_extrapolate_without_roughness=False
+            from_height = heights[np.argmin(np.abs(heights - to_height))]
 
-    if extrapolate_without_roughness==False:    # Standard case with 1 wind speed height
-        from_name = "wnd{h:0d}m".format(h=int(from_height))
-        from_name2 = None
-    else: 
+    if model == "interpolation" and possible_extrapolate_without_roughness:
+        extrapolate_without_roughness = True
+        print("Calculating wind speed at hub height using 2 wind speed datasets.")
+    else:
+        extrapolate_without_roughness = False
+        print("Calculating wind speed at hub height using 1 wind speed dataset and surface roughness dataset.")
+
+    # Wind speed interpolation with option to NOT use surface roughness: 
+    if extrapolate_without_roughness==True: 
         from_name = "wnd{h:0d}m".format(h=int(from_height))
         from_name2 = "wnd{h:0d}m".format(h=int(from_height2))         # definition of second wind speed (for instance at 100m)
 
-    # Wind speed intrapolation with option to NOT use surface roughness: 
-    if extrapolate_without_roughness==True: 
         wnd_spd = ds[from_name] * (to_height / from_height)**((1 / np.log(from_height)) * np.log(ds[from_name2] / ds[from_name]))
 
         wnd_spd.attrs.update(
@@ -105,8 +101,11 @@ def extrapolate_wind_speed(ds, to_height, from_height=None, from_height2=None):
             "units": "m s**-1",
             }
         )
+    
+    # Wind speed extrapolation for the standard case with 1 wind speed height
     else:
-        # Wind speed extrapolation
+        from_name = "wnd{h:0d}m".format(h=int(from_height))
+        from_name2 = None
         wnd_spd = ds[from_name] * (
             np.log(to_height / ds["roughness"]) / np.log(from_height / ds["roughness"])
         )
