@@ -1,37 +1,37 @@
 # -*- coding: utf-8 -*-
 
-# SPDX-FileCopyrightText: 2016-2019 The Atlite Authors
+# SPDX-FileCopyrightText: 2016 - 2023 The Atlite Authors
 #
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 
 """
 Management of data retrieval and structure.
 """
 
+import logging
+import os
+from functools import wraps
+from shutil import rmtree
+from tempfile import mkdtemp, mkstemp
+
 import pandas as pd
 import xarray as xr
-import os
-from numpy import atleast_1d
-from tempfile import mkstemp, mkdtemp
-from shutil import rmtree
-from functools import wraps
-from dask import delayed, compute
-from dask.utils import SerializableLock
+from dask import compute, delayed
 from dask.diagnostics import ProgressBar
-import logging
-from itertools import chain
+from dask.utils import SerializableLock
+from numpy import atleast_1d
 
 logger = logging.getLogger(__name__)
 
-from .datasets import modules as datamodules
+from atlite.datasets import modules as datamodules
 
 
 def get_features(cutout, module, features, tmpdir=None):
     """
     Load the feature data for a given module.
 
-    This get the data for a set of features from a module. All modules in
-    `atlite.datasets` are allowed.
+    This get the data for a set of features from a module. All modules
+    in `atlite.datasets` are allowed.
     """
     parameters = cutout.data.attrs
     lock = SerializableLock()
@@ -43,14 +43,14 @@ def get_features(cutout, module, features, tmpdir=None):
             cutout, feature, tmpdir=tmpdir, lock=lock, **parameters
         )
         datasets.append(feature_data)
+
     datasets = compute(*datasets)
+
     ds = xr.merge(datasets, compat="equals")
-    fd = datamodules[module].features.items()
-    datavars = list(chain(*[l for k, l in fd]))
     for v in ds:
         ds[v].attrs["module"] = module
-        if v in datavars:
-            ds[v].attrs["feature"] = [k for k, l in fd if v in l].pop()
+        fd = datamodules[module].features.items()
+        ds[v].attrs["feature"] = [k for k, l in fd if v in l].pop()
     return ds
 
 
@@ -70,7 +70,6 @@ def available_features(module=None):
         A Series of all variables. The MultiIndex indicated which module
         provides the variable and with which feature name the variable can be
         obtained.
-
     """
     features = {name: m.features for name, m in datamodules.items()}
     features = (
@@ -86,7 +85,9 @@ def available_features(module=None):
 
 
 def non_bool_dict(d):
-    """Convert bool to int for netCDF4 storing"""
+    """
+    Convert bool to int for netCDF4 storing.
+    """
     return {k: v if not isinstance(v, bool) else int(v) for k, v in d.items()}
 
 
@@ -109,7 +110,13 @@ def maybe_remove_tmpdir(func):
 
 
 @maybe_remove_tmpdir
-def cutout_prepare(cutout, features=None, tmpdir=None, overwrite=False):
+def cutout_prepare(
+    cutout,
+    features=None,
+    tmpdir=None,
+    overwrite=False,
+    compression={"zlib": True, "complevel": 9, "shuffle": True},
+):
     """
     Prepare all or a selection of features in a cutout.
 
@@ -134,12 +141,18 @@ def cutout_prepare(cutout, features=None, tmpdir=None, overwrite=False):
     overwrite : bool, optional
         Whether to overwrite variables which are already included in the
         cutout. The default is False.
+    compression : None/dict, optional
+        Compression level to use for all features which are being prepared.
+        The compression is handled via xarray.Dataset.to_netcdf(...), for details see:
+        https://docs.xarray.dev/en/stable/generated/xarray.Dataset.to_netcdf.html .
+        To efficiently reduce cutout sizes, specify the number of 'least_significant_digits': n here.
+        To disable compression, set "complevel" to None.
+        Default is {'zlib': True, 'complevel': 9, 'shuffle': True}.
 
     Returns
     -------
     cutout : atlite.Cutout
         Cutout with prepared data. The variables are stored in `cutout.data`.
-
     """
     if cutout.prepared and not overwrite:
         logger.info("Cutout already prepared.")
@@ -168,6 +181,12 @@ def cutout_prepare(cutout, features=None, tmpdir=None, overwrite=False):
         cutout.data.attrs.update(dict(prepared_features=list(prepared)))
         attrs = non_bool_dict(cutout.data.attrs)
         attrs.update(ds.attrs)
+
+        # Add optional compression to the newly prepared features
+        if compression:
+            for v in missing_vars:
+                ds[v].encoding.update(compression)
+
         ds = cutout.data.merge(ds[missing_vars.values]).assign_attrs(**attrs)
 
         # write data to tmp file, copy it to original data, this is much safer
@@ -176,9 +195,12 @@ def cutout_prepare(cutout, features=None, tmpdir=None, overwrite=False):
         fd, tmp = mkstemp(suffix=filename, dir=directory)
         os.close(fd)
 
+        logger.debug("Writing cutout to file...")
+        # Delayed writing for large cutout
+        # cf. https://stackoverflow.com/questions/69810367/python-how-to-write-large-netcdf-with-xarray
+        write_job = ds.to_netcdf(tmp, compute=False)
         with ProgressBar():
-            ds.to_netcdf(tmp)
-
+            write_job.compute()
         if cutout.path.exists():
             cutout.data.close()
             cutout.path.unlink()

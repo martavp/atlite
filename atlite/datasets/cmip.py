@@ -35,6 +35,7 @@ features = {
     "influx": ["influx", "outflux"],
     "temperature": ["temperature"],
     "runoff": ["runoff"],
+    "wind_100m": ["wnd100m", "wnd_azimuth"],
 }
 
 crs = 4326
@@ -42,17 +43,33 @@ crs = 4326
 dask.config.set({"array.slicing.split_large_chunks": True})
 
 
-
 def search_ESGF(esgf_params, url="https://esgf-data.dkrz.de/esg-search"):
-    conn = SearchConnection(url, distrib=True)
-    ctx = conn.new_context(latest=True, **esgf_params)
-    if ctx.hit_count == 0:
-        ctx = ctx.constrain(frequency=esgf_params["frequency"] + "Pt")
+    if type(esgf_params['frequency'])==str:
+        print('Only one frequency has been requested - searching for',esgf_params["variable"] ,'at a frequency of',esgf_params['frequency'])
+        conn = SearchConnection(url, distrib=True)
+        ctx = conn.new_context(latest=True, facets='data_node,source_id,variant_label,experiment_id,project,frequency',**esgf_params)   #THEA
         if ctx.hit_count == 0:
-            raise (ValueError("No results found in the ESGF_database"))
-    latest = ctx.search()[0]
-    return latest.file_context().search()
-
+            ctx = ctx.constrain(frequency=esgf_params["frequency"] + "Pt")
+            if ctx.hit_count == 0:
+                raise (ValueError("No results found in the ESGF_database - check whether they exist on https://esgf-data.dkrz.de/search/cmip6-dkrz/"))
+        latest = ctx.search(ignore_facet_check=False,**esgf_params)[0]   #THEA
+        return latest.file_context().search()
+    else:
+        frequency_options = esgf_params['frequency']
+        print('Several frequencies requested - searching for',esgf_params["variable"] ,'at a frequencies of',frequency_options)
+        for frequency_option in frequency_options:
+            esgf_params['frequency'] = frequency_option
+            conn = SearchConnection(url, distrib=True)
+            ctx = conn.new_context(latest=True, facets='data_node,source_id,variant_label,experiment_id,project,frequency',**esgf_params)   #THEA
+            if ctx.hit_count == 0:
+                ctx = ctx.constrain(frequency=esgf_params["frequency"] + "Pt")
+            if ctx.hit_count != 0:
+                print(esgf_params["variable"],'found at frequency of',esgf_params['frequency'])
+                break
+        latest = ctx.search(ignore_facet_check=False,**esgf_params)[0]   #THEA
+        esgf_params['frequency'] = frequency_options
+        return latest.file_context().search()
+    
 
 def get_data_runoff(esgf_params, cutout, **retrieval_params):
     """
@@ -123,6 +140,26 @@ def get_data_wind(esgf_params, cutout, **retrieval_params):
     return ds
 
 
+def get_data_wind_100m(esgf_params, cutout, **retrieval_params):
+    """Function to get wind dataset at 100 m height"""
+
+    coords = cutout.coords
+    ds = retrieve_data(esgf_params, 
+                       coords, 
+                       variables=["ua100m", "va100m"], 
+                       **retrieval_params)
+    ds = _rename_and_fix_coords(cutout, ds)
+    ds["wnd100m"] = np.sqrt(ds["ua100m"] ** 2 + ds["va100m"] ** 2)
+    #.assign_attrs(units=ds["ua100m"].attrs["units"], long_name="100 meter wind speed")
+    # span the whole circle: 0 is north, π/2 is east, -π is south, 3π/2 is west
+    azimuth = np.arctan2(ds["ua100m"], ds["va100m"])
+    ds["wnd_azimuth"] = azimuth.where(azimuth >= 0, azimuth + 2 * np.pi)
+    ds = ds.drop_vars(["ua100m", "va100m"])
+    ds = ds.drop_vars("height")
+
+    return ds
+
+
 def _year_in_file(time_range, years):
     """
     Find which file contains the requested years
@@ -164,12 +201,23 @@ def retrieve_data(esgf_params, coords, variables, chunks=None, tmpdir=None, lock
                 for f in search_results
                 if _year_in_file(f.opendap_url.split("_")[-1], years)
             ]
-            dsets.append(xr.open_mfdataset(files, chunks=chunks, combine='nested', concat_dim=["time"]))
+            temp_ds = xr.open_mfdataset(files, chunks=chunks, concat_dim=["time"], combine='nested')
+            dt = xr.infer_freq(time)
+            if xr.infer_freq(temp_ds["time"]) != dt: 
+                temp_ds = resample_ds(esgf_params,temp_ds,coords["time"])
+                
+            dsets.append(temp_ds)
     ds = xr.merge(dsets)
 
     ds.attrs = {**ds.attrs, **esgf_params}
 
     return ds
+
+
+def resample_ds(esgf_params,temp_ds,time):
+    temp_ds_resampled = temp_ds.reindex_like(time).ffill('time')
+    
+    return temp_ds_resampled
 
 
 def _rename_and_fix_coords(cutout, ds, add_lon_lat=True, add_ctime=False):
@@ -281,7 +329,9 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
     logger.info(f"Requesting data for feature {feature}...")
 
     ds = func(esgf_params, cutout, **retrieval_params)
+
     ds = ds.sel(time=coords["time"])
+    
     bounds = cutout.bounds
     ds = ds.sel(x=slice(bounds[0], bounds[2]), y=slice(bounds[1], bounds[3]))
     ds = ds.interp({"x": cutout.data.x, "y": cutout.data.y})

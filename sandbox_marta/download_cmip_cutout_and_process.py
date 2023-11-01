@@ -35,35 +35,40 @@ TODO 3: Decide which variant_label to use
 # it seems that I don't need to specify the data_node
 # do I need to specify the variant_label?
 
+
+def retrieve_cutout_cmip6(filename, year, esgf_params):
+    
+    cutout_cmip = atlite.Cutout(path=filename,
+                                module=['cmip'],
+                                x=slice(-13,45),
+                                y=slice(32,83),
+                                time=str(year)+'-01',
+                                esgf_params=esgf_params,
+                                dt='3H',dx=1, dy=1)
+    # dt='3H'
+
+    # ds = xr.Dataset(
+    #         {
+    #         "x": np.round(np.arange(-180, 180, 1), 9),
+    #         "y": np.round(np.arange(-90, 90, 1), 9),
+    #         "time": pd.date_range(start='2015', end='2100', freq=dt),})
+
+    cutout_cmip.prepare()
+
+    # cutout_cmip.data
+    return cutout_cmip
+
 esgf_params = {
-   #'data_node': 'esgf-cnr.hpc.cineca.it',
+   'data_node': 'esgf-cnr.hpc.cineca.it',
    'source_id': 'EC-Earth3',
    'variant_label':'r4i1p1f1',
-   #'experiment_id': 'ssp126',
-   'experiment_id': 'ssp126',
+   'experiment_id': 'ssp585',
    'project' : 'CMIP6',
-   'frequency':'3hr'
+   'frequency':['3hr','6hr']
 }
 
-cutout_cmip = atlite.Cutout(path='cmip_europe_2031.nc', module=['cmip'],
-                      x=slice(-13,45),
-                      y=slice(32,83),
-                      time='2032-01',
-                      esgf_params=esgf_params,
-                      dt='3H',dx=1, dy=1)
-dt='3H'
-
-ds = xr.Dataset(
-    {
-        "x": np.round(np.arange(-180, 180, 1), 9),
-        "y": np.round(np.arange(-90, 90, 1), 9),
-        "time": pd.date_range(start='2015', end='2100', freq=dt),
-    }
-)
-
-cutout_cmip.prepare()
-
-cutout_cmip.data
+cutout_cmip=retrieve_cutout_cmip6(filename='cutouts_cmip6/EC-Earth3/cmip_europe_2035.nc',
+                      esgf_params=esgf_params, year=2035)
 
 #%%
 """
