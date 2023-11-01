@@ -23,3 +23,4 @@ atlite/version.py
 paper
 .coverage*
 !.coveragerc
+sandbox_ebbe/
