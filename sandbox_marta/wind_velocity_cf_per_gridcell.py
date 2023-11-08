@@ -12,15 +12,14 @@ Using cutout data downloaded from
 
 import sys #to use files in git_repos folder
 sys.path.insert(0,'../../atlite')
-#sys.path.insert(0,'/media/sf_Dropbox/AU/GIT_REPOS/atlite')
 
 import atlite
 import numpy as np
 import matplotlib.pyplot as plt
 
 # load cutout data. file need to be downloaded manually
-#cutout=atlite.Cutout("cutouts/europe-2013-era5.nc")
-cutout=atlite.Cutout("cutouts/be-03-2013-era5.nc")
+cutout=atlite.Cutout("cutouts/europe-2013-era5.nc")
+
 
 # Retrieving the wind velocity at 100m
 wnd100m=cutout.data['wnd100m'].values
