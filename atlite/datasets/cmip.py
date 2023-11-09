@@ -184,7 +184,7 @@ def _year_in_file(time_range, years):
 
 def retrieve_data(esgf_params, coords, variables, chunks=None, tmpdir=None, lock=None):
     """
-    Download data from egsf database
+    Download data from esgf database
 
     """
     time = coords["time"].to_index()
