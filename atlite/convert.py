@@ -369,12 +369,12 @@ def solar_thermal(
 
 
 # wind
-def convert_wind(ds, turbine):
+def convert_wind(ds, turbine, model, from_height):
     """Convert wind speeds for turbine to wind energy generation."""
 
     V, POW, hub_height, P = itemgetter("V", "POW", "hub_height", "P")(turbine)
 
-    wnd_hub = windm.extrapolate_wind_speed(ds, to_height=hub_height)
+    wnd_hub = windm.extrapolate_wind_speed(ds, model, from_height, to_height=hub_height)
 
     def _interpolate(da):
         return np.interp(da, V, POW / P)
@@ -393,7 +393,7 @@ def convert_wind(ds, turbine):
     return da
 
 
-def wind(cutout, turbine, smooth=False, **params):
+def wind(cutout, turbine, model, from_height, smooth=False, **params):
     """
     Generate wind generation time-series
 
@@ -430,9 +430,12 @@ def wind(cutout, turbine, smooth=False, **params):
         turbine = windturbine_smooth(turbine, params=smooth)
 
     return cutout.convert_and_aggregate(
-        convert_func=convert_wind, turbine=turbine, **params
+        convert_func=convert_wind, 
+        turbine=turbine, 
+        model=model,
+        from_height=from_height, 
+        **params
     )
-
 
 # solar PV
 def convert_pv(ds, panel, orientation, trigon_model="simple", clearsky_model="simple"):
