@@ -189,10 +189,10 @@ da = roughness.roughness.interp_like(cutout_cmip.data['influx'].isel(time=0))
 cutout_cmip.data = cutout_cmip.data.assign(roughness=da)
 
 # Wind power CF per gridcell map
-cp_wind = cutout_cmip.wind('Vestas_V112_3MW', 
+wind_cf = cutout_cmip.wind('Vestas_V112_3MW', 
                            capacity_factor=True)
 
-pv_cf.plot(alpha=0.7, cmap='winter')
+wind_cf.plot(alpha=0.7, cmap='winter')
 plt.title('CF wind')
 plt.savefig('figures/capacity_factor_wind.jpg', 
             dpi=300, bbox_inches='tight')
