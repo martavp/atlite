@@ -1,0 +1,32 @@
+# -*- coding: utf-8 -*-
+
+name: atlite_cmip6_2025
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10
+  - numpy
+  - scipy
+  - pandas>=0.25
+  - xarray>=2024.03.0
+  - netcdf4
+  - dask>=2021.10.0
+  - toolz
+  - pyyaml
+  - requests
+  - geopandas
+  - cdsapi>=0.7.4
+  - pyproj>=2.0
+  - rasterio!=1.4.0,!=1.4.1
+  - shapely
+  - progressbar2
+  - tqdm
+  - bottleneck
+  - numexpr
+  - esgf-pyclient
+  - xclim
+  
+
+
+

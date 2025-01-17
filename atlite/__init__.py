@@ -30,11 +30,11 @@ from atlite.gis import ExclusionContainer, compute_indicatormatrix, regrid
 from atlite.resource import cspinstallations, solarpanels, windturbines
 
 # e.g. "0.17.1" or "0.17.1.dev4+ga3890dc0" (if installed from git)
-__version__ = version("atlite")
+#__version__ = version("atlite")
 # e.g. "0.17.0" # TODO, in the network structure it should use the dev version
-match = re.match(r"(\d+\.\d+(\.\d+)?)", __version__)
-assert match, f"Could not determine release_version of pypsa: {__version__}"
-release_version = match.group(0)
+#match = re.match(r"(\d+\.\d+(\.\d+)?)", __version__)
+#assert match, f"Could not determine release_version of pypsa: {__version__}"
+#release_version = match.group(0)
 
 __all__ = [
     Cutout,
@@ -44,5 +44,5 @@ __all__ = [
     cspinstallations,
     solarpanels,
     windturbines,
-    __version__,
+#    __version__,
 ]

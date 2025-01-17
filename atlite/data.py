@@ -17,6 +17,7 @@ from dask import compute, delayed
 from dask.diagnostics import ProgressBar
 from dask.utils import SerializableLock
 from numpy import atleast_1d
+from itertools import chain
 
 from atlite.datasets import modules as datamodules
 
@@ -57,10 +58,12 @@ def get_features(
     datasets = compute(*datasets)
 
     ds = xr.merge(datasets, compat="equals")
+    fd = datamodules[module].features.items()
+    datavars = list(chain(*[l for k, l in fd]))
     for v in ds:
         ds[v].attrs["module"] = module
-        fd = datamodules[module].features.items()
-        ds[v].attrs["feature"] = [k for k, l in fd if v in l].pop()
+        if v in datavars:
+            ds[v].attrs["feature"] = [k for k, l in fd if v in l].pop()
     return ds
 
 
