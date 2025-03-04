@@ -101,4 +101,16 @@ cutout.prepared_features  # included weather variables
 # %%
 cutout.data  # access to underlying xarray data
 
+#%%
 
+# To create a cutout including a month, dask need to get the time input as a full month as below
+cutout = atlite.Cutout(
+    path="cutouts/test_europe_201301",
+    module=["sarah", "era5"],
+    sarah_dir="sarah_2",
+    x=slice(-9.975, 19.98),
+    y=slice(30, 65),
+    time="2013-01",
+    chunks={"time": 100},
+)
+cutout.prepare()
