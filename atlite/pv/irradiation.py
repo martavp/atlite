@@ -10,7 +10,7 @@ from dask.array import cos, fmax, fmin, radians, sin, sqrt
 logger = logging.getLogger(__name__)
 
 
-def DiffuseHorizontalIrrad(ds, solar_position, clearsky_model, influx):
+def DiffuseHorizontalIrrad(ds, solar_position, clearsky_model, influx, altitude_threshold=1.0):
     # Clearsky model from Reindl 1990 to split downward radiation into direct
     # and diffuse contributions. Should switch to more up-to-date model, f.ex.
     # Ridley et al. (2010) http://dx.doi.org/10.1016/j.renene.2009.07.018 ,
@@ -27,7 +27,7 @@ def DiffuseHorizontalIrrad(ds, solar_position, clearsky_model, influx):
     # Reindl 1990 clearsky model
 
     k = influx / influx_toa  # clearsky index
-    # k.values[k.values > 1.0] = 1.0
+    k.values[k.values > 1.0] = 1.0
     # k = k.rename('clearsky index')
 
     if clearsky_model == "simple":
@@ -67,7 +67,7 @@ def DiffuseHorizontalIrrad(ds, solar_position, clearsky_model, influx):
         raise KeyError("`clearsky model` must be chosen from 'simple' and 'enhanced'")
 
     # Set diffuse fraction to one when the sun isn't up
-    # fraction = fraction.where(sinaltitude >= sin(radians(threshold))).fillna(1.0)
+    fraction = fraction.where(sinaltitude >= sin(radians(altitude_threshold))).fillna(1.0)
     # fraction = fraction.rename('fraction index')
 
     return (influx * fraction).rename("diffuse horizontal")
