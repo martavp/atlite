@@ -939,9 +939,15 @@ def runoff(
 ):
     result = cutout.convert_and_aggregate(convert_func=convert_runoff, **params)
 
+    time_index = pd.to_datetime(result.coords["time"].values)
+    timestep = pd.Series(time_index).diff().median()
+    if pd.isna(timestep) or timestep <= pd.Timedelta(0):
+        timestep = pd.Timedelta("1h")
+    timestep_hours = timestep / pd.Timedelta("1h")
+
     if smooth is not None:
         if smooth is True:
-            smooth = 24 * 7
+            smooth = max(1, round(pd.Timedelta("7D") / timestep))
         if "return_capacity" in params.keys():
             result = result[0].rolling(time=smooth, min_periods=1).mean(), result[1]
         else:
@@ -962,10 +968,11 @@ def runoff(
         else:
             normalize_using_yearly_i = normalize_using_yearly_i.astype(int)
 
+        full_year_steps = pd.Timedelta("365D") / timestep * (8700 / 8760)
         years = (
-            pd.Series(pd.to_datetime(result.coords["time"].values).year)
+            pd.Series(time_index.year)
             .value_counts()
-            .loc[lambda x: x > 8700]
+            .loc[lambda x: x > full_year_steps]
             .index.intersection(normalize_using_yearly_i)
         )
         assert len(years), "Need at least a full year of data (more is better)"
@@ -974,7 +981,7 @@ def runoff(
         dim = result.dims[1 - result.get_axis_num("time")]
         result *= (
             xr.DataArray(normalize_using_yearly.loc[years_overlap].sum(), dims=[dim])
-            / result.sel(time=years_overlap).sum("time")
+            / (result.sel(time=years_overlap).sum("time") * timestep_hours)
         ).reindex(countries=result.coords["countries"])
 
     return result
