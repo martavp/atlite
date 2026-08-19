@@ -969,19 +969,30 @@ def runoff(
             normalize_using_yearly_i = normalize_using_yearly_i.astype(int)
 
         full_year_steps = pd.Timedelta("365D") / timestep * (8700 / 8760)
-        years = (
-            pd.Series(time_index.year)
-            .value_counts()
-            .loc[lambda x: x > full_year_steps]
-            .index.intersection(normalize_using_yearly_i)
+        year_counts = pd.Series(time_index.year).value_counts()
+        years = year_counts.index.intersection(normalize_using_yearly_i)
+        assert len(years) and year_counts.loc[years].sum() > full_year_steps, (
+            "Need at least a full year of data (more is better)"
         )
-        assert len(years), "Need at least a full year of data (more is better)"
-        years_overlap = slice(str(min(years)), str(max(years)))
 
         dim = result.dims[1 - result.get_axis_num("time")]
+        full_years = year_counts.loc[lambda x: x > full_year_steps].index.intersection(
+            normalize_using_yearly_i
+        )
+
+        if len(full_years):
+            years_overlap = slice(str(min(full_years)), str(max(full_years)))
+            annual_value = normalize_using_yearly.loc[years_overlap].sum()
+            reference = result.sel(time=years_overlap).sum("time")
+        else:
+            weights = year_counts.loc[years] / year_counts.loc[years].sum()
+            annual_value = sum(
+                w * normalize_using_yearly.loc[year] for year, w in weights.items()
+            )
+            reference = result.sum("time")
+
         result *= (
-            xr.DataArray(normalize_using_yearly.loc[years_overlap].sum(), dims=[dim])
-            / (result.sel(time=years_overlap).sum("time") * timestep_hours)
+            xr.DataArray(annual_value, dims=[dim]) / (reference * timestep_hours)
         ).reindex(countries=result.coords["countries"])
 
     return result
