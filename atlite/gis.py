@@ -63,11 +63,18 @@ def get_coords(x, y, time, dx=0.25, dy=0.25, dt="h", **kwargs):
     x = slice(*sorted([x.start, x.stop]))
     y = slice(*sorted([y.start, y.stop]))
 
+    end = pd.Timestamp.now()
+    if isinstance(time, slice):
+        if time.stop is not None:
+            end = max(end, pd.Timestamp(time.stop) + pd.Timedelta(days=1))
+    else:
+        end = max(end, pd.Timestamp(time) + pd.Timedelta(days=1))
+
     ds = xr.Dataset(
         {
             "x": np.round(np.arange(-180, 180, dx), 9),
             "y": np.round(np.arange(-90, 90, dy), 9),
-            "time": pd.date_range(start="1940", end="now", freq=dt),
+            "time": pd.date_range(start="1940", end=end, freq=dt),
         }
     )
     ds = ds.assign_coords(lon=ds.coords["x"], lat=ds.coords["y"])
@@ -479,11 +486,10 @@ class ExclusionContainer:
                 assert isinstance(raster, rio.DatasetReader)
 
             # Check if the raster has a valid CRS
-            if not raster.crs:
-                if d["crs"]:
-                    raster._crs = CRS(d["crs"])
-                else:
-                    raise ValueError(f"CRS of {raster} is invalid, please provide it.")
+            if d["crs"]:
+                raster._crs = CRS(d["crs"])
+            elif not raster.crs:
+                raise ValueError(f"CRS of {raster} is invalid, please provide it.")
             d["raster"] = raster
 
         for d in self.geometries:
