@@ -561,15 +561,36 @@ def solar_thermal(
 
 
 # wind
+LINEAR_BIAS_CORRECT_100M_FN = Path(
+    "/groups/EXTREMES/LENTIS/lin_bias_corr/bias_factor_era5_gwa2_wind_100m.nc"
+)
+
 def convert_wind(
     ds: xr.Dataset,
     turbine: TurbineConfig,
     interpolation_method: Literal["logarithmic", "power"],
+    linear_bias_correct_100m: bool = False,
 ) -> xr.DataArray:
     """
     Convert wind speeds for turbine to wind energy generation.
+
+    Parameters
+    ----------
+    linear_bias_correct_100m : bool, optional
+        If True, multiply the 100m wind speed of every grid cell (for all
+        time steps) by the corresponding scaling factor stored in
+        ``bias_factor_era5_gwa2_wind_100m.nc``, before extrapolating to hub
+        height. The default is False.
     """
     V, POW, hub_height, P = itemgetter("V", "POW", "hub_height", "P")(turbine)
+
+    if linear_bias_correct_100m:
+        with xr.open_dataset(LINEAR_BIAS_CORRECT_100M_FN) as bias_ds:
+            bias_factor = bias_ds["bias_factor_era5_gwa2_wind_100m"].load()
+        bias_factor = bias_factor.sel(
+            x=ds["x"], y=ds["y"], method="nearest"
+        )
+        ds = ds.assign(wnd100m=ds["wnd100m"] * bias_factor)
 
     wnd_hub = windm.extrapolate_wind_speed(
         ds, to_height=hub_height, method=interpolation_method
@@ -598,6 +619,7 @@ def wind(
     smooth: bool | dict = False,
     add_cutout_windspeed: bool = False,
     interpolation_method: Literal["logarithmic", "power"] = "logarithmic",
+    linear_bias_correct_100m: bool = False,
     **params,
 ) -> xr.DataArray:
     """
@@ -628,6 +650,11 @@ def wind(
     interpolation_method : {"logarithmic", "power"}
         Law to interpolate wind speed to turbine hub height. Refer to
         :py:func:`atlite.wind.extrapolate_wind_speed`.
+    linear_bias_correct_100m : bool
+        If True, multiply the 100m wind speed of every grid cell (for all
+        time steps) by the corresponding scaling factor stored in
+        ``bias_factor_era5_gwa2_wind_100m.nc``, before extrapolating to hub
+        height. The default is False.
 
     Note
     ----
@@ -649,6 +676,7 @@ def wind(
         convert_func=convert_wind,
         turbine=turbine,
         interpolation_method=interpolation_method,
+        linear_bias_correct_100m=linear_bias_correct_100m,
         **params,
     )
 
@@ -968,26 +996,39 @@ def runoff(
         else:
             normalize_using_yearly_i = normalize_using_yearly_i.astype(int)
 
+        max_eia_year = normalize_using_yearly_i.max()
+
+        def to_eia_year(year):
+            # Cutout years beyond the available EIA data are future
+            # scenario years (e.g. LENTIS); use the EIA year 75 years
+            # earlier as the historical stand-in for normalization.
+            return year - 75 if year > max_eia_year else year
+
         full_year_steps = pd.Timedelta("365D") / timestep * (8700 / 8760)
         year_counts = pd.Series(time_index.year).value_counts()
-        years = year_counts.index.intersection(normalize_using_yearly_i)
-        assert len(years) and year_counts.loc[years].sum() > full_year_steps, (
-            "Need at least a full year of data (more is better)"
+        eia_year_of = pd.Series(
+            [to_eia_year(y) for y in year_counts.index], index=year_counts.index
         )
+        matched_years = year_counts.index[eia_year_of.isin(normalize_using_yearly_i)]
+        assert (
+            len(matched_years) and year_counts.loc[matched_years].sum() > full_year_steps
+        ), "Need at least a full year of data (more is better)"
 
         dim = result.dims[1 - result.get_axis_num("time")]
         full_years = year_counts.loc[lambda x: x > full_year_steps].index.intersection(
-            normalize_using_yearly_i
+            matched_years
         )
 
         if len(full_years):
             years_overlap = slice(str(min(full_years)), str(max(full_years)))
-            annual_value = normalize_using_yearly.loc[years_overlap].sum()
+            eia_years = [to_eia_year(y) for y in full_years]
+            annual_value = normalize_using_yearly.loc[eia_years].sum()
             reference = result.sel(time=years_overlap).sum("time")
         else:
-            weights = year_counts.loc[years] / year_counts.loc[years].sum()
+            weights = year_counts.loc[matched_years] / year_counts.loc[matched_years].sum()
             annual_value = sum(
-                w * normalize_using_yearly.loc[year] for year, w in weights.items()
+                w * normalize_using_yearly.loc[to_eia_year(year)]
+                for year, w in weights.items()
             )
             reference = result.sum("time")
 
