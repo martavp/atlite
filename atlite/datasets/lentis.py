@@ -182,6 +182,16 @@ def crop_and_rename(ds, cutout):
     return ds.drop_vars(["lon", "lat"])
 
 
+def _round_coords(ds, decimals=6):
+    """
+    Round ``lat``/``lon`` coordinates to `decimals` places.
+    to avoid that floating point noise in lat/lon create white bands
+    when creating cutouts.
+    """
+    coords = {c: ds[c].round(decimals) for c in ("lat", "lon") if c in ds.coords}
+    return ds.assign_coords(coords)
+
+
 def get_data_height(cutout, lentis_dir, **_):
     """
     Load LENTIS static orography (orog_fx_*.nc) as a 2-D height field.
@@ -242,7 +252,7 @@ def get_data_wind(cutout, lentis_dir, parallel=False, lock=None, **_):
     """
     coords = cutout.coords
     chunks = cutout.chunks
-    open_kw = dict(chunks=chunks, parallel=parallel)
+    open_kw = dict(chunks=chunks, parallel=parallel, preprocess=_round_coords)
     _ctx = lock if lock is not None else nullcontext()
 
     with _ctx:
@@ -361,7 +371,7 @@ def get_data_temperature(cutout, lentis_dir, parallel=False, lock=None, **_):
     """
     coords = cutout.coords
     chunks = cutout.chunks
-    open_kwargs = dict(chunks=chunks, parallel=parallel)
+    open_kwargs = dict(chunks=chunks, parallel=parallel, preprocess=_round_coords)
     _ctx = lock if lock is not None else nullcontext()
 
     files = get_filenames(lentis_dir, coords, varname="tas", freq="3hr")
@@ -396,7 +406,7 @@ def get_data_runoff(cutout, lentis_dir, parallel=False, lock=None, **_):
     """
     coords = cutout.coords
     chunks = cutout.chunks
-    open_kwargs = dict(chunks=chunks, parallel=parallel)
+    open_kwargs = dict(chunks=chunks, parallel=parallel, preprocess=_round_coords)
     _ctx = lock if lock is not None else nullcontext()
 
     files = get_filenames(lentis_dir, coords, varname="mrro", freq="3hr")
@@ -423,7 +433,7 @@ def get_data_influx(cutout, lentis_dir, parallel=False, lock=None, **_):
     """
     coords = cutout.coords
     chunks = cutout.chunks
-    open_kwargs = dict(chunks=chunks, parallel=parallel)
+    open_kwargs = dict(chunks=chunks, parallel=parallel, preprocess=_round_coords)
     _ctx = lock if lock is not None else nullcontext()
 
     files = get_filenames(lentis_dir, coords, varname="rsds", freq="3hr")
