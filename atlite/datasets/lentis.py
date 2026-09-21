@@ -231,7 +231,6 @@ def get_data_wind(cutout, lentis_dir, parallel=False, lock=None, **_):
 
     Uses 3-hourly ``uas``/``vas`` (10 m surface wind components) to derive
     ``wnd10m``, ``wnd100m``, and ``wnd_azimuth``.
-    ``wnd_shear_exp`` is set to a constant 1/7 everywhere.
    
     ``wnd_shear_exp`` is computed using the power law applied to wind speeds
     at the 1000 hPa (approx. 100m) and 850 hPa  (approx. 1500m) levels, with heights derived from the
