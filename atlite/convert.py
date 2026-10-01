@@ -682,6 +682,33 @@ def wind(
 
 
 # irradiation
+LINEAR_BIAS_CORRECT_DIRECT_FN = Path(
+    "/groups/EXTREMES/LENTIS/lin_bias_corr/bias_factor_era5_sarah_solar_influx_direct.nc"
+)
+LINEAR_BIAS_CORRECT_DIFFUSE_FN = Path(
+    "/groups/EXTREMES/LENTIS/lin_bias_corr/bias_factor_era5_sarah_solar_influx_diffuse.nc"
+)
+
+
+def _linear_bias_correct(ds, var, fn):
+    """
+    Multiply ``ds[var]`` in every grid cell (for all time steps) by the
+    corresponding scaling factor stored in the NetCDF file ``fn``.
+    """
+    with xr.open_dataset(fn) as bias_ds:
+        bias_factor = bias_ds[fn.stem].load()
+    bias_factor = bias_factor.sel(x=ds["x"], y=ds["y"], method="nearest")
+    return ds.assign({var: ds[var] * bias_factor})
+
+
+def _linear_bias_correct_solar(ds, linear_bias_correct_direct, linear_bias_correct_diffuse):
+    if linear_bias_correct_direct:
+        ds = _linear_bias_correct(ds, "influx_direct", LINEAR_BIAS_CORRECT_DIRECT_FN)
+    if linear_bias_correct_diffuse:
+        ds = _linear_bias_correct(ds, "influx_diffuse", LINEAR_BIAS_CORRECT_DIFFUSE_FN)
+    return ds
+
+
 def convert_irradiation(
     ds,
     orientation,
@@ -689,7 +716,12 @@ def convert_irradiation(
     irradiation="total",
     trigon_model="simple",
     clearsky_model="simple",
+    linear_bias_correct_direct=False,
+    linear_bias_correct_diffuse=False,
 ):
+    ds = _linear_bias_correct_solar(
+        ds, linear_bias_correct_direct, linear_bias_correct_diffuse
+    )
     solar_position = SolarPosition(ds)
     surface_orientation = SurfaceOrientation(ds, solar_position, orientation, tracking)
     irradiation = TiltedIrradiation(
@@ -710,6 +742,8 @@ def irradiation(
     irradiation="total",
     tracking=None,
     clearsky_model=None,
+    linear_bias_correct_direct=False,
+    linear_bias_correct_diffuse=False,
     **params,
 ):
     """
@@ -742,6 +776,14 @@ def irradiation(
         model. The default choice of None will choose dependending on
         data availability, since the 'enhanced' model also
         incorporates ambient air temperature and relative humidity.
+    linear_bias_correct_direct : bool
+        If True, multiply the direct irradiance of every grid cell (for all
+        time steps) by the corresponding scaling factor stored in
+        ``bias_factor_era5_sarah_solar_influx_direct.nc``. The default is False.
+    linear_bias_correct_diffuse : bool
+        If True, multiply the diffuse irradiance of every grid cell (for all
+        time steps) by the corresponding scaling factor stored in
+        ``bias_factor_era5_sarah_solar_influx_diffuse.nc``. The default is False.
 
     Returns
     -------
@@ -769,14 +811,26 @@ def irradiation(
         tracking=tracking,
         irradiation=irradiation,
         clearsky_model=clearsky_model,
+        linear_bias_correct_direct=linear_bias_correct_direct,
+        linear_bias_correct_diffuse=linear_bias_correct_diffuse,
         **params,
     )
 
 
 # solar PV
 def convert_pv(
-    ds, panel, orientation, tracking, trigon_model="simple", clearsky_model="simple"
+    ds,
+    panel,
+    orientation,
+    tracking,
+    trigon_model="simple",
+    clearsky_model="simple",
+    linear_bias_correct_direct=False,
+    linear_bias_correct_diffuse=False,
 ):
+    ds = _linear_bias_correct_solar(
+        ds, linear_bias_correct_direct, linear_bias_correct_diffuse
+    )
     solar_position = SolarPosition(ds)
     surface_orientation = SurfaceOrientation(ds, solar_position, orientation, tracking)
     irradiation = TiltedIrradiation(
@@ -791,7 +845,16 @@ def convert_pv(
     return solar_panel
 
 
-def pv(cutout, panel, orientation, tracking=None, clearsky_model=None, **params):
+def pv(
+    cutout,
+    panel,
+    orientation,
+    tracking=None,
+    clearsky_model=None,
+    linear_bias_correct_direct=False,
+    linear_bias_correct_diffuse=False,
+    **params,
+):
     """
     Convert downward-shortwave, upward-shortwave radiation flux and ambient
     temperature into a pv generation time-series.
@@ -819,6 +882,14 @@ def pv(cutout, panel, orientation, tracking=None, clearsky_model=None, **params)
         model. The default choice of None will choose dependending on
         data availability, since the 'enhanced' model also
         incorporates ambient air temperature and relative humidity.
+    linear_bias_correct_direct : bool
+        If True, multiply the direct irradiance of every grid cell (for all
+        time steps) by the corresponding scaling factor stored in
+        ``bias_factor_era5_sarah_solar_influx_direct.nc``. The default is False.
+    linear_bias_correct_diffuse : bool
+        If True, multiply the diffuse irradiance of every grid cell (for all
+        time steps) by the corresponding scaling factor stored in
+        ``bias_factor_era5_sarah_solar_influx_diffuse.nc``. The default is False.
 
     Returns
     -------
@@ -856,6 +927,8 @@ def pv(cutout, panel, orientation, tracking=None, clearsky_model=None, **params)
         orientation=orientation,
         tracking=tracking,
         clearsky_model=clearsky_model,
+        linear_bias_correct_direct=linear_bias_correct_direct,
+        linear_bias_correct_diffuse=linear_bias_correct_diffuse,
         **params,
     )
 
