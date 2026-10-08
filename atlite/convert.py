@@ -560,16 +560,44 @@ def solar_thermal(
     )
 
 
-# wind
+# linear bias correction
 LINEAR_BIAS_CORRECT_100M_FN = Path(
     "/groups/EXTREMES/LENTIS/lin_bias_corr/bias_factor_era5_gwa2_wind_100m.nc"
 )
+LINEAR_BIAS_CORRECT_DIRECT_FN = Path(
+    "/groups/EXTREMES/LENTIS/lin_bias_corr/bias_factor_era5_sarah_solar_influx_direct.nc"
+)
+LINEAR_BIAS_CORRECT_DIFFUSE_FN = Path(
+    "/groups/EXTREMES/LENTIS/lin_bias_corr/bias_factor_era5_sarah_solar_influx_diffuse.nc"
+)
 
+
+def _linear_bias_correct(ds, var, fn):
+    """
+    Multiply ``ds[var]`` in every grid cell (for all time steps) by the
+    corresponding scaling factor stored in the NetCDF file ``fn``, which must
+    contain a single data variable with dimensions (y, x).
+    """
+    with xr.open_dataset(fn) as bias_ds:
+        (bias_factor,) = bias_ds.data_vars.values()
+        bias_factor = bias_factor.load()
+    bias_factor = (
+        bias_factor.sel(x=ds["x"].values, y=ds["y"].values, method="nearest")
+        # drop scalar/auxiliary coords (e.g. 'height', 'crs', 'lon', 'lat')
+        # which clash with cutout variables of the same name
+        .reset_coords(drop=True)
+        .assign_coords(x=ds["x"], y=ds["y"])
+    )
+    return ds.assign({var: ds[var] * bias_factor})
+
+
+# wind
 def convert_wind(
     ds: xr.Dataset,
     turbine: TurbineConfig,
     interpolation_method: Literal["logarithmic", "power"],
     linear_bias_correct_100m: bool = False,
+    linear_bias_correct_100m_fn: str | Path = LINEAR_BIAS_CORRECT_100M_FN,
 ) -> xr.DataArray:
     """
     Convert wind speeds for turbine to wind energy generation.
@@ -579,18 +607,16 @@ def convert_wind(
     linear_bias_correct_100m : bool, optional
         If True, multiply the 100m wind speed of every grid cell (for all
         time steps) by the corresponding scaling factor stored in
-        ``bias_factor_era5_gwa2_wind_100m.nc``, before extrapolating to hub
+        ``linear_bias_correct_100m_fn``, before extrapolating to hub
         height. The default is False.
+    linear_bias_correct_100m_fn : str or Path, optional
+        NetCDF file with the 100m wind speed scaling factors. The default is
+        ``LINEAR_BIAS_CORRECT_100M_FN``.
     """
     V, POW, hub_height, P = itemgetter("V", "POW", "hub_height", "P")(turbine)
 
     if linear_bias_correct_100m:
-        with xr.open_dataset(LINEAR_BIAS_CORRECT_100M_FN) as bias_ds:
-            bias_factor = bias_ds["bias_factor_era5_gwa2_wind_100m"].load()
-        bias_factor = bias_factor.sel(
-            x=ds["x"], y=ds["y"], method="nearest"
-        )
-        ds = ds.assign(wnd100m=ds["wnd100m"] * bias_factor)
+        ds = _linear_bias_correct(ds, "wnd100m", linear_bias_correct_100m_fn)
 
     wnd_hub = windm.extrapolate_wind_speed(
         ds, to_height=hub_height, method=interpolation_method
@@ -620,6 +646,7 @@ def wind(
     add_cutout_windspeed: bool = False,
     interpolation_method: Literal["logarithmic", "power"] = "logarithmic",
     linear_bias_correct_100m: bool = False,
+    linear_bias_correct_100m_fn: str | Path = LINEAR_BIAS_CORRECT_100M_FN,
     **params,
 ) -> xr.DataArray:
     """
@@ -653,8 +680,11 @@ def wind(
     linear_bias_correct_100m : bool
         If True, multiply the 100m wind speed of every grid cell (for all
         time steps) by the corresponding scaling factor stored in
-        ``bias_factor_era5_gwa2_wind_100m.nc``, before extrapolating to hub
+        ``linear_bias_correct_100m_fn``, before extrapolating to hub
         height. The default is False.
+    linear_bias_correct_100m_fn : str or Path
+        NetCDF file with the 100m wind speed scaling factors. The default is
+        ``LINEAR_BIAS_CORRECT_100M_FN``.
 
     Note
     ----
@@ -677,35 +707,23 @@ def wind(
         turbine=turbine,
         interpolation_method=interpolation_method,
         linear_bias_correct_100m=linear_bias_correct_100m,
+        linear_bias_correct_100m_fn=linear_bias_correct_100m_fn,
         **params,
     )
 
 
 # irradiation
-LINEAR_BIAS_CORRECT_DIRECT_FN = Path(
-    "/groups/EXTREMES/LENTIS/lin_bias_corr/bias_factor_era5_sarah_solar_influx_direct.nc"
-)
-LINEAR_BIAS_CORRECT_DIFFUSE_FN = Path(
-    "/groups/EXTREMES/LENTIS/lin_bias_corr/bias_factor_era5_sarah_solar_influx_diffuse.nc"
-)
-
-
-def _linear_bias_correct(ds, var, fn):
-    """
-    Multiply ``ds[var]`` in every grid cell (for all time steps) by the
-    corresponding scaling factor stored in the NetCDF file ``fn``.
-    """
-    with xr.open_dataset(fn) as bias_ds:
-        bias_factor = bias_ds[fn.stem].load()
-    bias_factor = bias_factor.sel(x=ds["x"], y=ds["y"], method="nearest")
-    return ds.assign({var: ds[var] * bias_factor})
-
-
-def _linear_bias_correct_solar(ds, linear_bias_correct_direct, linear_bias_correct_diffuse):
+def _linear_bias_correct_solar(
+    ds,
+    linear_bias_correct_direct,
+    linear_bias_correct_diffuse,
+    linear_bias_correct_direct_fn,
+    linear_bias_correct_diffuse_fn,
+):
     if linear_bias_correct_direct:
-        ds = _linear_bias_correct(ds, "influx_direct", LINEAR_BIAS_CORRECT_DIRECT_FN)
+        ds = _linear_bias_correct(ds, "influx_direct", linear_bias_correct_direct_fn)
     if linear_bias_correct_diffuse:
-        ds = _linear_bias_correct(ds, "influx_diffuse", LINEAR_BIAS_CORRECT_DIFFUSE_FN)
+        ds = _linear_bias_correct(ds, "influx_diffuse", linear_bias_correct_diffuse_fn)
     return ds
 
 
@@ -718,9 +736,15 @@ def convert_irradiation(
     clearsky_model="simple",
     linear_bias_correct_direct=False,
     linear_bias_correct_diffuse=False,
+    linear_bias_correct_direct_fn=LINEAR_BIAS_CORRECT_DIRECT_FN,
+    linear_bias_correct_diffuse_fn=LINEAR_BIAS_CORRECT_DIFFUSE_FN,
 ):
     ds = _linear_bias_correct_solar(
-        ds, linear_bias_correct_direct, linear_bias_correct_diffuse
+        ds,
+        linear_bias_correct_direct,
+        linear_bias_correct_diffuse,
+        linear_bias_correct_direct_fn,
+        linear_bias_correct_diffuse_fn,
     )
     solar_position = SolarPosition(ds)
     surface_orientation = SurfaceOrientation(ds, solar_position, orientation, tracking)
@@ -744,6 +768,8 @@ def irradiation(
     clearsky_model=None,
     linear_bias_correct_direct=False,
     linear_bias_correct_diffuse=False,
+    linear_bias_correct_direct_fn=LINEAR_BIAS_CORRECT_DIRECT_FN,
+    linear_bias_correct_diffuse_fn=LINEAR_BIAS_CORRECT_DIFFUSE_FN,
     **params,
 ):
     """
@@ -779,11 +805,17 @@ def irradiation(
     linear_bias_correct_direct : bool
         If True, multiply the direct irradiance of every grid cell (for all
         time steps) by the corresponding scaling factor stored in
-        ``bias_factor_era5_sarah_solar_influx_direct.nc``. The default is False.
+        ``linear_bias_correct_direct_fn``. The default is False.
     linear_bias_correct_diffuse : bool
         If True, multiply the diffuse irradiance of every grid cell (for all
         time steps) by the corresponding scaling factor stored in
-        ``bias_factor_era5_sarah_solar_influx_diffuse.nc``. The default is False.
+        ``linear_bias_correct_diffuse_fn``. The default is False.
+    linear_bias_correct_direct_fn : str or Path
+        NetCDF file with the direct irradiance scaling factors. The default
+        is ``LINEAR_BIAS_CORRECT_DIRECT_FN``.
+    linear_bias_correct_diffuse_fn : str or Path
+        NetCDF file with the diffuse irradiance scaling factors. The default
+        is ``LINEAR_BIAS_CORRECT_DIFFUSE_FN``.
 
     Returns
     -------
@@ -813,6 +845,8 @@ def irradiation(
         clearsky_model=clearsky_model,
         linear_bias_correct_direct=linear_bias_correct_direct,
         linear_bias_correct_diffuse=linear_bias_correct_diffuse,
+        linear_bias_correct_direct_fn=linear_bias_correct_direct_fn,
+        linear_bias_correct_diffuse_fn=linear_bias_correct_diffuse_fn,
         **params,
     )
 
@@ -827,9 +861,15 @@ def convert_pv(
     clearsky_model="simple",
     linear_bias_correct_direct=False,
     linear_bias_correct_diffuse=False,
+    linear_bias_correct_direct_fn=LINEAR_BIAS_CORRECT_DIRECT_FN,
+    linear_bias_correct_diffuse_fn=LINEAR_BIAS_CORRECT_DIFFUSE_FN,
 ):
     ds = _linear_bias_correct_solar(
-        ds, linear_bias_correct_direct, linear_bias_correct_diffuse
+        ds,
+        linear_bias_correct_direct,
+        linear_bias_correct_diffuse,
+        linear_bias_correct_direct_fn,
+        linear_bias_correct_diffuse_fn,
     )
     solar_position = SolarPosition(ds)
     surface_orientation = SurfaceOrientation(ds, solar_position, orientation, tracking)
@@ -853,6 +893,8 @@ def pv(
     clearsky_model=None,
     linear_bias_correct_direct=False,
     linear_bias_correct_diffuse=False,
+    linear_bias_correct_direct_fn=LINEAR_BIAS_CORRECT_DIRECT_FN,
+    linear_bias_correct_diffuse_fn=LINEAR_BIAS_CORRECT_DIFFUSE_FN,
     **params,
 ):
     """
@@ -885,11 +927,17 @@ def pv(
     linear_bias_correct_direct : bool
         If True, multiply the direct irradiance of every grid cell (for all
         time steps) by the corresponding scaling factor stored in
-        ``bias_factor_era5_sarah_solar_influx_direct.nc``. The default is False.
+        ``linear_bias_correct_direct_fn``. The default is False.
     linear_bias_correct_diffuse : bool
         If True, multiply the diffuse irradiance of every grid cell (for all
         time steps) by the corresponding scaling factor stored in
-        ``bias_factor_era5_sarah_solar_influx_diffuse.nc``. The default is False.
+        ``linear_bias_correct_diffuse_fn``. The default is False.
+    linear_bias_correct_direct_fn : str or Path
+        NetCDF file with the direct irradiance scaling factors. The default
+        is ``LINEAR_BIAS_CORRECT_DIRECT_FN``.
+    linear_bias_correct_diffuse_fn : str or Path
+        NetCDF file with the diffuse irradiance scaling factors. The default
+        is ``LINEAR_BIAS_CORRECT_DIFFUSE_FN``.
 
     Returns
     -------
@@ -929,6 +977,8 @@ def pv(
         clearsky_model=clearsky_model,
         linear_bias_correct_direct=linear_bias_correct_direct,
         linear_bias_correct_diffuse=linear_bias_correct_diffuse,
+        linear_bias_correct_direct_fn=linear_bias_correct_direct_fn,
+        linear_bias_correct_diffuse_fn=linear_bias_correct_diffuse_fn,
         **params,
     )
 
