@@ -250,7 +250,8 @@ def get_data_wind(cutout, lentis_dir, member=None, parallel=False, lock=None, **
     ``wnd_shear_exp`` is computed using the power law applied to wind speeds
     at the 1000 hPa (approx. 100m) and 850 hPa  (approx. 1500m) levels, with heights derived from the
     hypsometric equation. Requires daily ``ua``, ``va``, ``ta``, 3-hourly
-    ``ps``, ``tas``, and static ``orog`` in ``lentis_dir``.
+    ``ps``, ``tas``, and static ``orog`` in ``lentis_dir``. The exponent is
+    clipped to the range [0, 0.5].
 
     Parameters
     ----------
@@ -365,7 +366,7 @@ def get_data_wind(cutout, lentis_dir, member=None, parallel=False, lock=None, **
 
     ds["wnd_shear_exp"] = (
         np.log(wnd_1000 / wnd_850) / np.log(h_1000_agl / h_850_agl)
-    ).clip(min=0).assign_attrs(
+    ).clip(min=0, max=0.5).assign_attrs(
         units="", long_name="wind shear exponent (1000–850 hPa power law)"
     )
 
