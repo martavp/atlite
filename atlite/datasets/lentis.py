@@ -55,8 +55,8 @@ features = {
 static_features = {"height"}
 
 
-def get_filenames(lentis_dir, coords, varname="rsds", freq="3hr"):
-    
+def get_filenames(lentis_dir, coords, varname="rsds", freq="3hr", member=None):
+
     """
     Get all files in directory `lentis_dir` relevant for coordinates `coords`.
 
@@ -72,6 +72,10 @@ def get_filenames(lentis_dir, coords, varname="rsds", freq="3hr"):
     freq : str, optional
         CMIP6 frequency string used in filenames, e.g. ``"3hr"`` or ``"day"``
         (default ``"3hr"``).
+    member : str, optional
+        CMIP6 variant label of the ensemble member, e.g. ``"r1020i0p5f1"``.
+        Only files of this member are selected. If None, files of all members
+        are matched, which fails if `lentis_dir` holds more than one member.
 
     Returns
     -------
@@ -79,12 +83,15 @@ def get_filenames(lentis_dir, coords, varname="rsds", freq="3hr"):
     covering the cutout time span.
     """
 
-    pattern = os.path.join(lentis_dir, "**", f"{varname}_{freq}_*.nc")
+    member_pattern = f"_{member}_" if member is not None else "_"
+    pattern = os.path.join(lentis_dir, "**", f"{varname}_{freq}_*{member_pattern}*.nc")
     files = pd.Series(glob.glob(pattern, recursive=True))
     assert not files.empty, (
         f"No files found at {pattern}. Make sure "
         f"lentis_dir points to the correct directory!"
     )
+    # The same file may be extracted in more than one subdirectory; keep one copy.
+    files = files[~files.map(os.path.basename).duplicated()].reset_index(drop=True)
     # CMIP6 filenames end in _YYYYMM[DD[HHMM]]-YYYYMM[DD[HHMM]].nc; extract start/end date.
     # Monthly (Lmon) files use YYYYMM (6 digits); sub-daily use YYYYMMDD or YYYYMMDDhhmm.
     starts = pd.to_datetime(
@@ -102,6 +109,14 @@ def get_filenames(lentis_dir, coords, varname="rsds", freq="3hr"):
 
     mask = (files.index <= end) & (ends.values >= start)
     filtered = files.loc[mask].sort_index()
+
+    if filtered.index.duplicated().any():
+        raise ValueError(
+            f"Several files with the same start date found at {pattern}, "
+            f"probably from different ensemble members: "
+            f"{filtered[filtered.index.duplicated(keep=False)].tolist()}. "
+            f"Pass `member` to select one."
+        )
 
     if filtered.empty:
         logger.error(
@@ -225,7 +240,7 @@ def get_data_height(cutout, lentis_dir, **_):
     return ds.assign_coords(cutout.coords)
 
 
-def get_data_wind(cutout, lentis_dir, parallel=False, lock=None, **_):
+def get_data_wind(cutout, lentis_dir, member=None, parallel=False, lock=None, **_):
     """
     Load LENTIS 3-hourly surface wind data and reformat to match the given cutout.
 
@@ -256,12 +271,12 @@ def get_data_wind(cutout, lentis_dir, parallel=False, lock=None, **_):
 
     with _ctx:
         ds_uas = xr.open_mfdataset(
-            get_filenames(lentis_dir, coords, varname="uas", freq="3hr"),
+            get_filenames(lentis_dir, coords, member=member, varname="uas", freq="3hr"),
             combine="by_coords", **open_kw,
         )[["uas"]]
     with _ctx:
         ds_vas = xr.open_mfdataset(
-            get_filenames(lentis_dir, coords, varname="vas", freq="3hr"),
+            get_filenames(lentis_dir, coords, member=member, varname="vas", freq="3hr"),
             combine="by_coords", **open_kw,
         )[["vas"]]
     ds = xr.merge([ds_uas, ds_vas])
@@ -280,26 +295,26 @@ def get_data_wind(cutout, lentis_dir, parallel=False, lock=None, **_):
     with _ctx:
         ds_plev = xr.merge([
             xr.open_mfdataset(
-                get_filenames(lentis_dir, coords, varname="ua", freq="day"),
+                get_filenames(lentis_dir, coords, member=member, varname="ua", freq="day"),
                 combine="by_coords", **open_kw,
             )[["ua"]],
             xr.open_mfdataset(
-                get_filenames(lentis_dir, coords, varname="va", freq="day"),
+                get_filenames(lentis_dir, coords, member=member, varname="va", freq="day"),
                 combine="by_coords", **open_kw,
             )[["va"]],
             xr.open_mfdataset(
-                get_filenames(lentis_dir, coords, varname="ta", freq="day"),
+                get_filenames(lentis_dir, coords, member=member, varname="ta", freq="day"),
                 combine="by_coords", **open_kw,
             )[["ta"]],
         ]).sel(plev=[100000.0, 85000.0])
     with _ctx:
         ds_surf = xr.merge([
             xr.open_mfdataset(
-                get_filenames(lentis_dir, coords, varname="tas", freq="3hr"),
+                get_filenames(lentis_dir, coords, member=member, varname="tas", freq="3hr"),
                 combine="by_coords", **open_kw,
             )[["tas"]],
             xr.open_mfdataset(
-                get_filenames(lentis_dir, coords, varname="ps", freq="3hr"),
+                get_filenames(lentis_dir, coords, member=member, varname="ps", freq="3hr"),
                 combine="by_coords", **open_kw,
             )[["ps"]],
         ])
@@ -361,7 +376,7 @@ def get_data_wind(cutout, lentis_dir, parallel=False, lock=None, **_):
     return ds.drop_vars(["uas", "vas", "height"], errors="ignore")
 
 
-def get_data_temperature(cutout, lentis_dir, parallel=False, lock=None, **_):
+def get_data_temperature(cutout, lentis_dir, member=None, parallel=False, lock=None, **_):
     """
     Load LENTIS temperature data and reformat to match the given cutout.
 
@@ -373,7 +388,7 @@ def get_data_temperature(cutout, lentis_dir, parallel=False, lock=None, **_):
     open_kwargs = dict(chunks=chunks, parallel=parallel, preprocess=_round_coords)
     _ctx = lock if lock is not None else nullcontext()
 
-    files = get_filenames(lentis_dir, coords, varname="tas", freq="3hr")
+    files = get_filenames(lentis_dir, coords, member=member, varname="tas", freq="3hr")
     with _ctx:
         ds = xr.open_mfdataset(files, combine="by_coords", **open_kwargs)[["tas"]]
     ds = crop_and_rename(ds, cutout)
@@ -382,7 +397,7 @@ def get_data_temperature(cutout, lentis_dir, parallel=False, lock=None, **_):
     ds = ds.drop_vars(["height"], errors="ignore")
 
     # Load monthly soil temperature (tsl), select deepest level (~2 m, analogous to ERA5 stl4)
-    tsl_files = get_filenames(lentis_dir, coords, varname="tsl", freq="Lmon")
+    tsl_files = get_filenames(lentis_dir, coords, member=member, varname="tsl", freq="Lmon")
     with _ctx:
         ds_tsl = xr.open_mfdataset(tsl_files, combine="by_coords", **open_kwargs)[["tsl"]]
     ds_tsl = ds_tsl.isel(depth=3, drop=True)
@@ -396,7 +411,7 @@ def get_data_temperature(cutout, lentis_dir, parallel=False, lock=None, **_):
     return xr.merge([ds, ds_tsl])
 
 
-def get_data_runoff(cutout, lentis_dir, parallel=False, lock=None, **_):
+def get_data_runoff(cutout, lentis_dir, member=None, parallel=False, lock=None, **_):
     """
     Load LENTIS runoff data and reformat to match the given cutout.
 
@@ -408,7 +423,7 @@ def get_data_runoff(cutout, lentis_dir, parallel=False, lock=None, **_):
     open_kwargs = dict(chunks=chunks, parallel=parallel, preprocess=_round_coords)
     _ctx = lock if lock is not None else nullcontext()
 
-    files = get_filenames(lentis_dir, coords, varname="mrro", freq="3hr")
+    files = get_filenames(lentis_dir, coords, member=member, varname="mrro", freq="3hr")
     with _ctx:
         ds = xr.open_mfdataset(files, combine="by_coords", **open_kwargs)[["mrro"]]
     ds = crop_and_rename(ds, cutout)
@@ -419,7 +434,7 @@ def get_data_runoff(cutout, lentis_dir, parallel=False, lock=None, **_):
     return ds.drop_vars(["height"], errors="ignore")
 
 
-def get_data_influx(cutout, lentis_dir, parallel=False, lock=None, **_):
+def get_data_influx(cutout, lentis_dir, member=None, parallel=False, lock=None, **_):
     """
     Load LENTIS solar radiation data and reformat to match the given cutout.
 
@@ -435,10 +450,10 @@ def get_data_influx(cutout, lentis_dir, parallel=False, lock=None, **_):
     open_kwargs = dict(chunks=chunks, parallel=parallel, preprocess=_round_coords)
     _ctx = lock if lock is not None else nullcontext()
 
-    files = get_filenames(lentis_dir, coords, varname="rsds", freq="3hr")
+    files = get_filenames(lentis_dir, coords, member=member, varname="rsds", freq="3hr")
     with _ctx:
         ds = xr.open_mfdataset(files, combine="by_coords", **open_kwargs)[["rsds"]]
-    files_rsus = get_filenames(lentis_dir, coords, varname="rsus", freq="3hr")
+    files_rsus = get_filenames(lentis_dir, coords, member=member, varname="rsus", freq="3hr")
     with _ctx:
         ds_rsus = xr.open_mfdataset(files_rsus, combine="by_coords", **open_kwargs)[["rsus"]]
     ds = xr.merge([ds, ds_rsus])
@@ -522,6 +537,9 @@ def get_data(
         Mandatory arguments are:
             * 'lentis_dir', str. Directory of the stored LENTIS data.
         Possible arguments are:
+            * 'member', str. CMIP6 variant label of the ensemble member to
+            load, e.g. 'r1020i0p5f1'. Required if `lentis_dir` holds more
+            than one member.
             * 'parallel', bool. Whether to load stored files in parallel
             mode. Default is False.
 
@@ -536,6 +554,7 @@ def get_data(
     )
 
     lentis_dir = creation_parameters["lentis_dir"]
+    member = creation_parameters.get("member")
     creation_parameters.setdefault("parallel", False)
 
     if feature == "height":
@@ -548,6 +567,7 @@ def get_data(
         return get_data_wind(
             cutout,
             lentis_dir=lentis_dir,
+            member=member,
             parallel=creation_parameters["parallel"],
             lock=lock,
         )
@@ -556,6 +576,7 @@ def get_data(
         return get_data_temperature(
             cutout,
             lentis_dir=lentis_dir,
+            member=member,
             parallel=creation_parameters["parallel"],
             lock=lock,
         )
@@ -564,6 +585,7 @@ def get_data(
         return get_data_runoff(
             cutout,
             lentis_dir=lentis_dir,
+            member=member,
             parallel=creation_parameters["parallel"],
             lock=lock,
         )
@@ -571,6 +593,7 @@ def get_data(
     return get_data_influx(
         cutout,
         lentis_dir=lentis_dir,
+        member=member,
         parallel=creation_parameters["parallel"],
         lock=lock,
     )
