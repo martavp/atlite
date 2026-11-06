@@ -240,7 +240,9 @@ def get_data_height(cutout, lentis_dir, **_):
     return ds.assign_coords(cutout.coords)
 
 
-def get_data_wind(cutout, lentis_dir, member=None, parallel=False, lock=None, **_):
+def get_data_wind(
+    cutout, lentis_dir, member=None, parallel=False, lock=None, constant_alpha=False, **_
+):
     """
     Load LENTIS 3-hourly surface wind data and reformat to match the given cutout.
 
@@ -251,7 +253,8 @@ def get_data_wind(cutout, lentis_dir, member=None, parallel=False, lock=None, **
     at the 1000 hPa (approx. 100m) and 850 hPa  (approx. 1500m) levels, with heights derived from the
     hypsometric equation. Requires daily ``ua``, ``va``, ``ta``, 3-hourly
     ``ps``, ``tas``, and static ``orog`` in ``lentis_dir``. The exponent is
-    clipped to the range [0, 0.5].
+    clipped to the range [0, 0.5]. If ``constant_alpha`` is True, the exponent
+    is instead set to the constant 1/7 and no pressure-level data is needed.
 
     Parameters
     ----------
@@ -260,6 +263,8 @@ def get_data_wind(cutout, lentis_dir, member=None, parallel=False, lock=None, **
         Root directory of the LENTIS dataset.
     parallel : bool, optional
         Whether to open files in parallel. Default is False.
+    constant_alpha : bool, optional
+        If True, use a constant wind shear exponent of 1/7. Default is False.
 
     Returns
     -------
@@ -292,83 +297,88 @@ def get_data_wind(cutout, lentis_dir, member=None, parallel=False, lock=None, **
     azimuth = arctan2(ds["uas"], ds["vas"])
     ds["wnd_azimuth"] = azimuth.where(azimuth >= 0, azimuth + 2 * np.pi)
 
-    # --- wnd_shear_exp: power-law exponent from 1000 hPa and 850 hPa levels ---
-    with _ctx:
-        ds_plev = xr.merge([
-            xr.open_mfdataset(
-                get_filenames(lentis_dir, coords, member=member, varname="ua", freq="day"),
-                combine="by_coords", **open_kw,
-            )[["ua"]],
-            xr.open_mfdataset(
-                get_filenames(lentis_dir, coords, member=member, varname="va", freq="day"),
-                combine="by_coords", **open_kw,
-            )[["va"]],
-            xr.open_mfdataset(
-                get_filenames(lentis_dir, coords, member=member, varname="ta", freq="day"),
-                combine="by_coords", **open_kw,
-            )[["ta"]],
-        ]).sel(plev=[100000.0, 85000.0])
-    with _ctx:
-        ds_surf = xr.merge([
-            xr.open_mfdataset(
-                get_filenames(lentis_dir, coords, member=member, varname="tas", freq="3hr"),
-                combine="by_coords", **open_kw,
-            )[["tas"]],
-            xr.open_mfdataset(
-                get_filenames(lentis_dir, coords, member=member, varname="ps", freq="3hr"),
-                combine="by_coords", **open_kw,
-            )[["ps"]],
-        ])
-    _orog_pattern = os.path.join(lentis_dir, "**", "orog_fx_*.nc")
-    _orog_files = glob.glob(_orog_pattern, recursive=True)
-    if not _orog_files:
-        raise FileNotFoundError(f"No orog_fx_*.nc found in {lentis_dir}")
-    ds_orog = xr.open_dataset(_orog_files[0], chunks=chunks)[["orog"]]
+    # --- wnd_shear_exp: power-law exponent ---
+    if constant_alpha:
+        ds["wnd_shear_exp"] = xr.full_like(ds["wnd10m"], 1 / 7).assign_attrs(
+            units="", long_name="wind shear exponent (constant 1/7)"
+        )
+    else:
+        with _ctx:
+            ds_plev = xr.merge([
+                xr.open_mfdataset(
+                    get_filenames(lentis_dir, coords, member=member, varname="ua", freq="day"),
+                    combine="by_coords", **open_kw,
+                )[["ua"]],
+                xr.open_mfdataset(
+                    get_filenames(lentis_dir, coords, member=member, varname="va", freq="day"),
+                    combine="by_coords", **open_kw,
+                )[["va"]],
+                xr.open_mfdataset(
+                    get_filenames(lentis_dir, coords, member=member, varname="ta", freq="day"),
+                    combine="by_coords", **open_kw,
+                )[["ta"]],
+            ]).sel(plev=[100000.0, 85000.0])
+        with _ctx:
+            ds_surf = xr.merge([
+                xr.open_mfdataset(
+                    get_filenames(lentis_dir, coords, member=member, varname="tas", freq="3hr"),
+                    combine="by_coords", **open_kw,
+                )[["tas"]],
+                xr.open_mfdataset(
+                    get_filenames(lentis_dir, coords, member=member, varname="ps", freq="3hr"),
+                    combine="by_coords", **open_kw,
+                )[["ps"]],
+            ])
+        _orog_pattern = os.path.join(lentis_dir, "**", "orog_fx_*.nc")
+        _orog_files = glob.glob(_orog_pattern, recursive=True)
+        if not _orog_files:
+            raise FileNotFoundError(f"No orog_fx_*.nc found in {lentis_dir}")
+        ds_orog = xr.open_dataset(_orog_files[0], chunks=chunks)[["orog"]]
 
-    # Select pressure levels before crop_and_rename: regrid can't handle the
-    # extra plev dimension (rasterio only accepts 2D/3D arrays).
-    ds_plev_1000 = crop_and_rename(ds_plev.sel(plev=100000.0, drop=True), cutout)
-    ds_plev_850  = crop_and_rename(ds_plev.sel(plev=85000.0,  drop=True), cutout)
-    ds_surf = crop_and_rename(ds_surf, cutout)
-    ds_orog = crop_and_rename(ds_orog, cutout)
+        # Select pressure levels before crop_and_rename: regrid can't handle the
+        # extra plev dimension (rasterio only accepts 2D/3D arrays).
+        ds_plev_1000 = crop_and_rename(ds_plev.sel(plev=100000.0, drop=True), cutout)
+        ds_plev_850  = crop_and_rename(ds_plev.sel(plev=85000.0,  drop=True), cutout)
+        ds_surf = crop_and_rename(ds_surf, cutout)
+        ds_orog = crop_and_rename(ds_orog, cutout)
 
-    # Broadcast daily pressure-level data → 3-hourly cutout timestamps
-    ds_plev_1000 = ds_plev_1000.assign_coords(time=ds_plev_1000.time.dt.floor("D"))
-    ds_plev_850  = ds_plev_850.assign_coords(time=ds_plev_850.time.dt.floor("D"))
-    ds_plev_1000 = ds_plev_1000.reindex(time=coords["time"], method="ffill")
-    ds_plev_850  = ds_plev_850.reindex(time=coords["time"], method="ffill")
+        # Broadcast daily pressure-level data → 3-hourly cutout timestamps
+        ds_plev_1000 = ds_plev_1000.assign_coords(time=ds_plev_1000.time.dt.floor("D"))
+        ds_plev_850  = ds_plev_850.assign_coords(time=ds_plev_850.time.dt.floor("D"))
+        ds_plev_1000 = ds_plev_1000.reindex(time=coords["time"], method="ffill")
+        ds_plev_850  = ds_plev_850.reindex(time=coords["time"], method="ffill")
 
-    # Align 3-hourly surface fields to cutout timestamps
-    ds_surf = ds_surf.reindex(time=coords["time"])
+        # Align 3-hourly surface fields to cutout timestamps
+        ds_surf = ds_surf.reindex(time=coords["time"])
 
-    ta_1000 = ds_plev_1000["ta"]
-    ta_850  = ds_plev_850["ta"]
+        ta_1000 = ds_plev_1000["ta"]
+        ta_850  = ds_plev_850["ta"]
 
-    T_mean_sfc_1000 = (ds_surf["tas"] + ta_1000) / 2.0
-    T_mean_1000_850 = (ta_1000 + ta_850) / 2.0
+        T_mean_sfc_1000 = (ds_surf["tas"] + ta_1000) / 2.0
+        T_mean_1000_850 = (ta_1000 + ta_850) / 2.0
 
-    # Height of pressure levels above sea level via hypsometric equation
-    h_1000_amsl = (
-        ds_orog["orog"]
-        + (_R_D * T_mean_sfc_1000 / _G) * np.log(ds_surf["ps"] / 100000.0)
-    )
-    h_850_amsl = (
-        h_1000_amsl
-        + (_R_D * T_mean_1000_850 / _G) * np.log(100000.0 / 85000.0)
-    )
+        # Height of pressure levels above sea level via hypsometric equation
+        h_1000_amsl = (
+            ds_orog["orog"]
+            + (_R_D * T_mean_sfc_1000 / _G) * np.log(ds_surf["ps"] / 100000.0)
+        )
+        h_850_amsl = (
+            h_1000_amsl
+            + (_R_D * T_mean_1000_850 / _G) * np.log(100000.0 / 85000.0)
+        )
 
-    # Height above ground level (orography cancels)
-    h_1000_agl = (h_1000_amsl - ds_orog["orog"]).clip(min=11.0)
-    h_850_agl  = (h_850_amsl  - ds_orog["orog"]).clip(min=h_1000_agl + 1.0)
+        # Height above ground level (orography cancels)
+        h_1000_agl = (h_1000_amsl - ds_orog["orog"]).clip(min=11.0)
+        h_850_agl  = (h_850_amsl  - ds_orog["orog"]).clip(min=h_1000_agl + 1.0)
 
-    wnd_1000 = sqrt(ds_plev_1000["ua"] ** 2 + ds_plev_1000["va"] ** 2)
-    wnd_850  = sqrt(ds_plev_850["ua"]  ** 2 + ds_plev_850["va"]  ** 2)
+        wnd_1000 = sqrt(ds_plev_1000["ua"] ** 2 + ds_plev_1000["va"] ** 2)
+        wnd_850  = sqrt(ds_plev_850["ua"]  ** 2 + ds_plev_850["va"]  ** 2)
 
-    ds["wnd_shear_exp"] = (
-        np.log(wnd_1000 / wnd_850) / np.log(h_1000_agl / h_850_agl)
-    ).clip(min=0, max=0.5).assign_attrs(
-        units="", long_name="wind shear exponent (1000–850 hPa power law)"
-    )
+        ds["wnd_shear_exp"] = (
+            np.log(wnd_1000 / wnd_850) / np.log(h_1000_agl / h_850_agl)
+        ).clip(min=0, max=0.5).assign_attrs(
+            units="", long_name="wind shear exponent (1000–850 hPa power law)"
+        )
 
     ds["wnd100m"] = (ds["wnd10m"] * (100 / 10) ** ds["wnd_shear_exp"]).assign_attrs(
         units="m s-1", long_name="100 metre wind speed (power-law extrapolation)"
@@ -543,6 +553,9 @@ def get_data(
             than one member.
             * 'parallel', bool. Whether to load stored files in parallel
             mode. Default is False.
+            * 'constant_alpha', bool. If True, use a constant wind shear
+            exponent of 1/7 instead of deriving it from pressure-level data.
+            Default is False.
 
     Returns
     -------
@@ -571,6 +584,7 @@ def get_data(
             member=member,
             parallel=creation_parameters["parallel"],
             lock=lock,
+            constant_alpha=bool(creation_parameters.get("constant_alpha", False)),
         )
 
     if feature == "temperature":
